@@ -3,8 +3,8 @@
 
 [`Use this Template`](https://github.com/uniswapfoundation/v4-template/generate)
 
-1. The example hook [Counter.sol](src/Counter.sol) demonstrates the `beforeSwap()` and `afterSwap()` hooks
-2. The test template [Counter.t.sol](test/Counter.t.sol) preconfigures the v4 pool manager, test tokens, and test liquidity.
+1. The example hook [TakingFee.sol](src/TakingFee.sol) demonstrates the `beforeSwap()` and `afterSwap()` hooks
+2. The test template [TakingFee.t.sol](test/TakingFee.t.sol) preconfigures the v4 pool manager, test tokens, and test liquidity.
 
 <details>
 <summary>Updating to v4-template:latest</summary>
@@ -62,7 +62,7 @@ SWAP_ROUTER = 0x0
 Update the following command with your own private key:
 
 ```
-forge script script/00_Counter.s.sol \
+forge script script/00_TakingFee.s.sol \
 --rpc-url https://rpc.ankr.com/eth_goerli \
 --private-key [your_private_key_on_goerli_here] \
 --broadcast

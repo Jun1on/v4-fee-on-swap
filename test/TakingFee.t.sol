@@ -12,15 +12,18 @@ import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {CurrencyLibrary, Currency} from "v4-core/src/types/Currency.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {Deployers} from "v4-core/test/utils/Deployers.sol";
-import {Counter} from "../src/Counter.sol";
+import {TakingFee} from "../src/TakingFee.sol";
 import {HookMiner} from "./utils/HookMiner.sol";
 
-contract CounterTest is Test, Deployers {
+contract TakingFeeTest is Test, Deployers {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
-    Counter counter;
+    TakingFee takingFee;
     PoolId poolId;
+
+    address constant TREASURY = address(0x1234567890123456789012345678901234567890);
+    uint128 private constant TOTAL_BIPS = 10000;
 
     function setUp() public {
         // creates the pool manager, utility routers, and test tokens
@@ -29,16 +32,17 @@ contract CounterTest is Test, Deployers {
 
         // Deploy the hook to an address with the correct flags
         uint160 flags = uint160(
-            Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
-                | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
+            Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
         );
         (address hookAddress, bytes32 salt) =
-            HookMiner.find(address(this), flags, type(Counter).creationCode, abi.encode(address(manager)));
-        counter = new Counter{salt: salt}(IPoolManager(address(manager)));
-        require(address(counter) == hookAddress, "CounterTest: hook address mismatch");
+            HookMiner.find(address(this), flags, type(TakingFee).creationCode, abi.encode(address(manager), 25, TREASURY));
+        takingFee = new TakingFee{salt: salt}(IPoolManager(address(manager)), 25, TREASURY);
+        require(address(takingFee) == hookAddress, "TakingFeeTest: hook address mismatch");
+        require(takingFee.swapFeeBips() == 25, "TakingFeeTest: swapFeeBips mismatch");
+        require(takingFee.treasury() == TREASURY, "TakingFeeTest: treasury mismatch");
 
         // Create the pool
-        key = PoolKey(currency0, currency1, 3000, 60, IHooks(address(counter)));
+        key = PoolKey(currency0, currency1, 3000, 60, IHooks(address(takingFee)));
         poolId = key.toId();
         manager.initialize(key, SQRT_PRICE_1_1, ZERO_BYTES);
 
@@ -54,13 +58,10 @@ contract CounterTest is Test, Deployers {
         );
     }
 
-    function testCounterHooks() public {
+    function testSwapHooks() public {
         // positions were created in setup()
-        assertEq(counter.beforeAddLiquidityCount(poolId), 3);
-        assertEq(counter.beforeRemoveLiquidityCount(poolId), 0);
-
-        assertEq(counter.beforeSwapCount(poolId), 0);
-        assertEq(counter.afterSwapCount(poolId), 0);
+        assertEq(currency0.balanceOf(TREASURY), 0);
+        assertEq(currency1.balanceOf(TREASURY), 0);
 
         // Perform a test swap //
         bool zeroForOne = true;
@@ -68,24 +69,24 @@ contract CounterTest is Test, Deployers {
         BalanceDelta swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
         // ------------------- //
 
-        assertEq(int256(swapDelta.amount0()), amountSpecified);
+        uint128 output = uint128(swapDelta.amount1());
 
-        assertEq(counter.beforeSwapCount(poolId), 1);
-        assertEq(counter.afterSwapCount(poolId), 1);
-    }
+        uint128 expectedFee = output * TOTAL_BIPS/(TOTAL_BIPS - takingFee.swapFeeBips()) - output;
 
-    function testLiquidityHooks() public {
-        // positions were created in setup()
-        assertEq(counter.beforeAddLiquidityCount(poolId), 3);
-        assertEq(counter.beforeRemoveLiquidityCount(poolId), 0);
+        assertEq(currency0.balanceOf(TREASURY), 0);
+        assertEq(currency1.balanceOf(TREASURY), expectedFee);
+    
+        // Perform a test swap //
+        bool zeroForOne2 = true;
+        int256 amountSpecified2 = 1e18; // negative number indicates exact input swap!
+        BalanceDelta swapDelta2 = swap(key, zeroForOne2, amountSpecified2, ZERO_BYTES);
+        // ------------------- //
+        
+        uint128 input = uint128(-swapDelta2.amount0());
 
-        // remove liquidity
-        int256 liquidityDelta = -1e18;
-        modifyLiquidityRouter.modifyLiquidity(
-            key, IPoolManager.ModifyLiquidityParams(-60, 60, liquidityDelta, 0), ZERO_BYTES
-        );
+        uint128 expectedFee2 = (input * takingFee.swapFeeBips()) / (TOTAL_BIPS + takingFee.swapFeeBips());
 
-        assertEq(counter.beforeAddLiquidityCount(poolId), 3);
-        assertEq(counter.beforeRemoveLiquidityCount(poolId), 1);
+        assertEq(currency0.balanceOf(TREASURY), expectedFee2);
+        assertEq(currency1.balanceOf(TREASURY), expectedFee);
     }
 }
